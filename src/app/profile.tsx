@@ -134,7 +134,7 @@ export default function Profile() {
     if (!profile) return;
     try {
       await Share.share({
-        message: `Check out ${profile.username}'s music profile on Layers!`,
+        message: `Check out ${profile.username}'s music profile on Gigly!`,
       });
     } catch {}
   };

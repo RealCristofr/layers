@@ -148,7 +148,7 @@ export default function Discover() {
         <View style={styles.brandingWrap}>
           {/* Soft blush watercolor wash behind title */}
           <View style={styles.brushWash}>
-            <Text style={styles.brandTitle}>layers</Text>
+            <Text style={styles.brandTitle}>gigly</Text>
           </View>
           <Text style={styles.brandSubtitle}>MUSIC SOUNDS BETTER TOGETHER</Text>
         </View>
