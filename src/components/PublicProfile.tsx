@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { getFollowState, toggleFollowUser } from "../lib/follows";
+import { getLocalProfileMeta } from "../lib/profileMeta";
 import { supabase } from "../lib/supabase";
 import { colors } from "../theme";
 import DemoSection from "./DemoSection";
@@ -22,13 +23,18 @@ const AVAIL_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   "Open to remote": "globe-outline",
 };
 
-// Pastel palettes matching the mock up influences cards
-const INFLUENCE_TILES = [
-  { bg: "#F2C8D6", name: "my bloody\nvalentine" },
-  { bg: "#C6C4EC", name: "mazzy star" },
-  { bg: "#F5CAD2", name: "beabadoobee" },
-  { bg: "#CFE2F2", name: "elfbar" },
+const INFLUENCE_PALETTES = [
+  "#F2C8D6",
+  "#C6C4EC",
+  "#F5CAD2",
+  "#CFE2F2",
+  "#F6D6C6",
+  "#D6EBD7",
+  "#EAD0EC",
+  "#F3D4BA",
 ];
+
+const DEFAULT_INFLUENCES = ["my bloody valentine", "mazzy star", "beabadoobee", "elfbar"];
 
 type Props = {
   person: ProfileData & { id: string };
@@ -129,8 +135,21 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
     Alert.alert("Collab invite sent!", `We sent an invitation to ${person.username} to make something together.`);
   };
 
+  const localMeta = getLocalProfileMeta(person.id);
   const subtitle = [person.roles.join(", "), person.city].filter(Boolean).join(" · ");
-  const quote = person.bio ? `"${person.bio.slice(0, 60).replace(/["“”]/g, "").trim()}"` : '"soft voices. loud feelings."';
+  const customTagline = (person.tagline ?? localMeta.tagline)?.trim();
+  const quote = customTagline
+    ? `"${customTagline.replace(/["“”]/g, "")}"`
+    : person.bio
+    ? `"${person.bio.slice(0, 60).replace(/["“”]/g, "").trim()}"`
+    : '"soft voices. loud feelings."';
+
+  const userInfluences =
+    person.influences && person.influences.length > 0
+      ? person.influences
+      : localMeta.influences && localMeta.influences.length > 0
+      ? localMeta.influences
+      : DEFAULT_INFLUENCES;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 50 }}>
@@ -167,7 +186,7 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
         {/* Subtitle */}
         {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
 
-        {/* Tagline / Quote */}
+        {/* Tagline / Quote (Describe yourself on top) */}
         <Text style={styles.tagline}>{quote}</Text>
 
         {/* Sound / Genre Pills */}
@@ -236,25 +255,36 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
           </Pressable>
         </View>
 
-        {/* About Section */}
+        {/* About Section (Full Bio) */}
         <Text style={styles.sectionHeader}>About</Text>
         <Text style={styles.bodyText}>
           {person.bio ||
             "singer + songwriter. into hazy guitars, late night demos, and honest lyrics. looking for a drummer to start something new. let's make beautiful things together."}
         </Text>
 
-        {/* Influences Section */}
+        {/* Influences Section (Artists, Musicians, Bands) */}
         <Text style={styles.sectionHeader}>Influences</Text>
-        <View style={styles.influencesRow}>
-          {INFLUENCE_TILES.map((inf, idx) => (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.influencesScroll}
+        >
+          {userInfluences.map((inf, idx) => (
             <View key={idx} style={styles.influenceCol}>
-              <View style={[styles.influenceTile, { backgroundColor: inf.bg }]} />
+              <View
+                style={[
+                  styles.influenceTile,
+                  { backgroundColor: INFLUENCE_PALETTES[idx % INFLUENCE_PALETTES.length] },
+                ]}
+              >
+                <Text style={styles.influenceInitial}>{inf[0]?.toUpperCase()}</Text>
+              </View>
               <Text style={styles.influenceName} numberOfLines={2}>
-                {inf.name}
+                {inf}
               </Text>
             </View>
           ))}
-        </View>
+        </ScrollView>
 
         {/* Demos Section */}
         <DemoSection userId={person.id} />
@@ -459,21 +489,28 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: "#463D5C",
   },
-  influencesRow: {
+  influencesScroll: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10,
+    gap: 12,
+    paddingVertical: 4,
     marginBottom: 12,
   },
   influenceCol: {
-    flex: 1,
+    width: 78,
     alignItems: "flex-start",
   },
   influenceTile: {
-    width: "100%",
-    aspectRatio: 1,
+    width: 78,
+    height: 78,
     borderRadius: 18,
     marginBottom: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  influenceInitial: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "rgba(255, 255, 255, 0.85)",
   },
   influenceName: {
     fontSize: 12,

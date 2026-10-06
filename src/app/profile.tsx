@@ -17,6 +17,7 @@ import BlockedList from "../components/BlockedList";
 import DemoSection from "../components/DemoSection";
 import ProfileForm, { ProfileData } from "../components/ProfileForm";
 import { getFollowState } from "../lib/follows";
+import { getLocalProfileMeta } from "../lib/profileMeta";
 import { supabase } from "../lib/supabase";
 import { colors } from "../theme";
 
@@ -27,11 +28,15 @@ const AVAIL_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   "Open to remote": "globe-outline",
 };
 
-const INFLUENCE_TILES = [
-  { bg: "#F2C8D6", name: "my bloody\nvalentine" },
-  { bg: "#C6C4EC", name: "mazzy star" },
-  { bg: "#F5CAD2", name: "beabadoobee" },
-  { bg: "#CFE2F2", name: "elfbar" },
+const INFLUENCE_PALETTES = [
+  "#F2C8D6",
+  "#C6C4EC",
+  "#F5CAD2",
+  "#CFE2F2",
+  "#F6D6C6",
+  "#D6EBD7",
+  "#EAD0EC",
+  "#F3D4BA",
 ];
 
 export default function Profile() {
@@ -52,7 +57,15 @@ export default function Profile() {
     setUserId(user.id);
 
     const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-    setProfile(data);
+    const meta = getLocalProfileMeta(user.id);
+    const merged: ProfileData | null = data
+      ? {
+          ...data,
+          tagline: (data as any).tagline ?? meta.tagline ?? null,
+          influences: (data as any).influences ?? meta.influences ?? [],
+        }
+      : null;
+    setProfile(merged);
 
     // Load stats
     getFollowState(user.id, user.id).then((st) => {
@@ -144,7 +157,8 @@ export default function Profile() {
   if (!profile) return <View style={styles.screen} />;
 
   const subtitle = [profile.roles.join(", "), profile.city].filter(Boolean).join(" · ");
-  const quote = profile.bio ? `"${profile.bio.slice(0, 60).replace(/["“”]/g, "").trim()}"` : '"soft voices. loud feelings."';
+  const tagline = profile.tagline?.trim();
+  const userInfluences = profile.influences && profile.influences.length > 0 ? profile.influences : [];
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 50 }}>
@@ -169,11 +183,17 @@ export default function Profile() {
           <View style={styles.onlineDot} />
         </View>
 
-        {/* Subtitle */}
+        {/* Subtitle (Roles · City) */}
         {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
 
-        {/* Tagline / Quote */}
-        <Text style={styles.tagline}>{quote}</Text>
+        {/* Custom Tagline (Describe yourself on top, separate from bio) */}
+        {!!tagline ? (
+          <Text style={styles.tagline}>"{tagline.replace(/["“”]/g, "").trim()}"</Text>
+        ) : (
+          <Pressable onPress={() => setEditing(true)} hitSlop={6}>
+            <Text style={styles.addTaglinePrompt}>+ Add a tagline</Text>
+          </Pressable>
+        )}
 
         {/* Sound / Genre Pills */}
         {profile.genres.length > 0 && (
@@ -221,24 +241,49 @@ export default function Profile() {
           </Pressable>
         </View>
 
-        {/* About Section */}
+        {/* About Section (Full Bio) */}
         <Text style={styles.sectionHeader}>About</Text>
         <Text style={styles.bodyText}>
           {profile.bio || "Add a short bio so people know what you make."}
         </Text>
 
-        {/* Influences Section */}
-        <Text style={styles.sectionHeader}>Influences</Text>
-        <View style={styles.influencesRow}>
-          {INFLUENCE_TILES.map((inf, idx) => (
-            <View key={idx} style={styles.influenceCol}>
-              <View style={[styles.influenceTile, { backgroundColor: inf.bg }]} />
-              <Text style={styles.influenceName} numberOfLines={2}>
-                {inf.name}
-              </Text>
-            </View>
-          ))}
+        {/* Influences Section (User's custom artists, musicians, bands) */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionHeaderNoMargin}>Influences</Text>
+          <Pressable onPress={() => setEditing(true)} hitSlop={8}>
+            <Text style={styles.sectionActionText}>Edit</Text>
+          </Pressable>
         </View>
+
+        {userInfluences.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.influencesScroll}
+          >
+            {userInfluences.map((inf, idx) => (
+              <View key={idx} style={styles.influenceCol}>
+                <View
+                  style={[
+                    styles.influenceTile,
+                    { backgroundColor: INFLUENCE_PALETTES[idx % INFLUENCE_PALETTES.length] },
+                  ]}
+                >
+                  <Text style={styles.influenceInitial}>{inf[0]?.toUpperCase()}</Text>
+                </View>
+                <Text style={styles.influenceName} numberOfLines={2}>
+                  {inf}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        ) : (
+          <Pressable style={styles.emptyInfluenceBox} onPress={() => setEditing(true)}>
+            <Ionicons name="musical-notes-outline" size={22} color={colors.accent} />
+            <Text style={styles.emptyInfluenceTitle}>Add your favorite artists & bands</Text>
+            <Text style={styles.emptyInfluenceSub}>Tap to showcase what shapes your music</Text>
+          </Pressable>
+        )}
 
         {/* Demos Section */}
         {userId && <DemoSection userId={userId} editable />}
@@ -272,7 +317,7 @@ export default function Profile() {
           </>
         )}
 
-        {/* Blocked accounts modal / list if toggled */}
+        {/* Blocked accounts list */}
         {showBlocked && userId && (
           <View style={{ marginTop: 24 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -356,6 +401,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 6,
   },
+  addTaglinePrompt: {
+    fontSize: 14,
+    color: colors.accent,
+    fontWeight: "500",
+    marginTop: 6,
+    marginBottom: 6,
+  },
   pillsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -431,31 +483,77 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 8,
   },
+  sectionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 18,
+    marginBottom: 8,
+  },
+  sectionHeaderNoMargin: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#241838",
+  },
+  sectionActionText: {
+    color: colors.accent,
+    fontWeight: "600",
+    fontSize: 14,
+  },
   bodyText: {
     fontSize: 15,
     lineHeight: 22,
     color: "#463D5C",
   },
-  influencesRow: {
+  influencesScroll: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10,
+    gap: 12,
+    paddingVertical: 4,
     marginBottom: 12,
   },
   influenceCol: {
-    flex: 1,
+    width: 78,
     alignItems: "flex-start",
   },
   influenceTile: {
-    width: "100%",
-    aspectRatio: 1,
+    width: 78,
+    height: 78,
     borderRadius: 18,
     marginBottom: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  influenceInitial: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "rgba(255, 255, 255, 0.85)",
   },
   influenceName: {
     fontSize: 12,
     color: "#7B7093",
     lineHeight: 15,
+  },
+  emptyInfluenceBox: {
+    backgroundColor: "#F2EAF8",
+    borderRadius: 16,
+    padding: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    borderWidth: 1,
+    borderColor: "#E5D8F0",
+    borderStyle: "dashed",
+    marginVertical: 8,
+  },
+  emptyInfluenceTitle: {
+    color: colors.text,
+    fontWeight: "600",
+    fontSize: 14,
+    marginTop: 2,
+  },
+  emptyInfluenceSub: {
+    color: colors.textSoft,
+    fontSize: 12,
   },
   greenPill: {
     backgroundColor: "#DDF3E4",

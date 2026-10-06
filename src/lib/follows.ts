@@ -95,3 +95,4 @@ export async function toggleFollowUser(me: string, targetId: string, currentIsFo
 
   return { isFollowing: nextIsFollowing, followerCount: nextCount };
 }
+
