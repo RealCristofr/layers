@@ -10,7 +10,7 @@ import { colors, radius } from "../theme";
 
 type Person = ProfileData & { id: string };
 
-const AVATAR_COLORS = ["#E9C6DD", "#C9C3EC", "#F2C9D3", "#CFE0F0"];
+const AVATAR_COLORS = ["#E8D5E5", "#C6C4EC", "#F2C8D6", "#CFE2F2"];
 const FILTERS = ["All", "Vocals", "Guitar", "Bass", "Drums", "Producer", "Indie", "Shoegaze", "Pop", "Hip-Hop"];
 
 const colorFor = (name: string) => AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];

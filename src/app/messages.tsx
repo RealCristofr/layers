@@ -24,17 +24,24 @@ type Msg = {
   read_at: string | null;
 };
 
-const AVATAR_COLORS = ["#E9C6DD", "#C9C3EC", "#F2C9D3", "#CFE0F0"];
+const AVATAR_COLORS = ["#E8D5E5", "#C6C4EC", "#F2C8D6", "#CFE2F2"];
 const nameOf = (p: any): string => (Array.isArray(p) ? p[0]?.username : p?.username) ?? "someone";
 const colorFor = (name: string) => AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
 
 const shortTime = (iso: string) => {
+  if (!iso) return "";
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
   const now = new Date();
   if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    let hours = d.getHours();
+    const minutes = d.getMinutes().toString().padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12 || 12;
+    return `${hours}:${minutes} ${ampm}`;
   }
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${months[d.getMonth()]} ${d.getDate()}`;
 };
 
 export default function Messages() {

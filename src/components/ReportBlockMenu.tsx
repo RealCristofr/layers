@@ -29,9 +29,10 @@ type Props = {
   otherName: string;
   onBlocked: () => void;
   buttonStyle?: StyleProp<ViewStyle>;
+  iconColor?: string;
 };
 
-export default function ReportBlockMenu({ me, otherId, otherName, onBlocked, buttonStyle }: Props) {
+export default function ReportBlockMenu({ me, otherId, otherName, onBlocked, buttonStyle, iconColor }: Props) {
   const [reporting, setReporting] = useState(false);
   const [reason, setReason] = useState<string | null>(null);
   const [details, setDetails] = useState("");
@@ -101,7 +102,7 @@ export default function ReportBlockMenu({ me, otherId, otherName, onBlocked, but
   return (
     <>
       <Pressable onPress={openMenu} hitSlop={10} style={[styles.btn, buttonStyle]}>
-        <Ionicons name="ellipsis-horizontal" size={22} color={colors.text} />
+        <Ionicons name="ellipsis-horizontal" size={22} color={iconColor ?? colors.text} />
       </Pressable>
 
       <Modal visible={reporting} transparent animationType="slide" onRequestClose={closeReport}>

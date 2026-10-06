@@ -39,8 +39,16 @@ const STARTERS = [
   "Your demo is great. Want to make something?",
 ];
 
-const timeOf = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const timeOf = (iso: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  let hours = d.getHours();
+  const minutes = d.getMinutes().toString().padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12 || 12;
+  return `${hours}:${minutes} ${ampm}`;
+};
 
 const statusOf = (m: Message): { icon: keyof typeof Ionicons.glyphMap; text: string; seen: boolean } => {
   if (m.read_at) return { icon: "checkmark-done", text: `Seen ${timeOf(m.read_at)}`, seen: true };
