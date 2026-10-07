@@ -7,6 +7,8 @@ export type ProfileMeta = {
 
 const getMetaKey = (userId: string) => `layers_profile_meta_${userId}`;
 
+// Reads values saved on this phone by older versions of the app.
+// Used only to pre-fill the edit form once, so nothing you typed is lost.
 export function getLocalProfileMeta(userId: string): ProfileMeta {
   try {
     if (typeof localStorage !== "undefined") {
@@ -17,10 +19,10 @@ export function getLocalProfileMeta(userId: string): ProfileMeta {
   return {};
 }
 
-export function saveLocalProfileMeta(userId: string, meta: ProfileMeta) {
+function clearLocalProfileMeta(userId: string) {
   try {
     if (typeof localStorage !== "undefined") {
-      localStorage.setItem(getMetaKey(userId), JSON.stringify(meta));
+      localStorage.removeItem(getMetaKey(userId));
     }
   } catch {}
 }
@@ -39,47 +41,16 @@ export async function saveProfileWithMeta(
     availability: string[];
   }
 ) {
-  // Always save locally so the user has immediate access
-  saveLocalProfileMeta(userId, {
-    tagline: payload.tagline,
-    influences: payload.influences,
+  const { error } = await supabase.from("profiles").upsert({
+    id: userId,
+    ...payload,
+    updated_at: new Date().toISOString(),
   });
 
-  const fullPayload = {
-    id: userId,
-    username: payload.username,
-    roles: payload.roles,
-    city: payload.city,
-    tagline: payload.tagline,
-    bio: payload.bio,
-    genres: payload.genres,
-    influences: payload.influences,
-    looking_for: payload.looking_for,
-    availability: payload.availability,
-    updated_at: new Date().toISOString(),
-  };
-
-  // 1. Try to upsert full payload including tagline and influences
-  const { error: fullError } = await supabase.from("profiles").upsert(fullPayload);
-
-  if (!fullError) {
-    return { ok: true, error: null };
+  if (error) {
+    return { ok: false, error };
   }
 
-  // 2. If Postgres reported column does not exist (e.g. 42703 or message mentions column), fallback to core columns
-  if (
-    fullError.code === "42703" ||
-    fullError.code === "PGRST204" ||
-    fullError.message?.toLowerCase().includes("column")
-  ) {
-    const { tagline: _t, influences: _i, ...corePayload } = fullPayload;
-    const { error: coreError } = await supabase.from("profiles").upsert(corePayload);
-    if (!coreError) {
-      return { ok: true, error: null };
-    }
-    return { ok: false, error: coreError };
-  }
-
-  return { ok: false, error: fullError };
+  clearLocalProfileMeta(userId);
+  return { ok: true, error: null };
 }
-

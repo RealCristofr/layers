@@ -58,7 +58,7 @@ export default function ReportBlockMenu({ me, otherId, otherName, onBlocked, but
   const confirmBlock = () =>
     Alert.alert(
       `Block ${otherName}?`,
-      "They won't be able to see your profile or send you requests, and your chat with them will be deleted. You can unblock them any time from your Profile.",
+      "They won't be able to see your profile or send you requests, and your chat with them will be deleted. You can unblock them any time from Privacy and safety in your profile settings.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Block", style: "destructive", onPress: block },

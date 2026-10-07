@@ -1,15 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { getFollowState, toggleFollowUser } from "../lib/follows";
-import { getLocalProfileMeta } from "../lib/profileMeta";
 import { supabase } from "../lib/supabase";
 import { colors } from "../theme";
 import DemoSection from "./DemoSection";
@@ -34,7 +26,12 @@ const INFLUENCE_PALETTES = [
   "#F3D4BA",
 ];
 
-const DEFAULT_INFLUENCES = ["my bloody valentine", "mazzy star", "beabadoobee", "elfbar"];
+type Conn = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: "pending" | "accepted";
+} | null;
 
 type Props = {
   person: ProfileData & { id: string };
@@ -46,11 +43,22 @@ type Props = {
 
 export default function PublicProfile({ person, me, color, onBack, onMessage }: Props) {
   const [isFollowing, setIsFollowing] = useState(false);
-  const [followerCount, setFollowerCount] = useState(127);
-  const [followingCount, setFollowingCount] = useState(28);
-  const [demoCount, setDemoCount] = useState(6);
-  const [collabSent, setCollabSent] = useState(false);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [demoCount, setDemoCount] = useState(0);
+  const [conn, setConn] = useState<Conn>(null);
   const [busy, setBusy] = useState(false);
+
+  const loadConn = useCallback(async () => {
+    const { data } = await supabase
+      .from("connections")
+      .select("id, requester_id, addressee_id, status")
+      .or(
+        `and(requester_id.eq.${me},addressee_id.eq.${person.id}),and(requester_id.eq.${person.id},addressee_id.eq.${me})`
+      )
+      .maybeSingle();
+    setConn((data as Conn) ?? null);
+  }, [me, person.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -65,104 +73,123 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
       .from("demos")
       .select("id", { count: "exact", head: true })
       .eq("user_id", person.id)
+      .is("parent_id", null)
       .then(({ count }) => {
-        if (mounted && typeof count === "number") {
-          setDemoCount(count);
-        }
+        if (mounted) setDemoCount(count ?? 0);
       });
+
+    loadConn();
 
     return () => {
       mounted = false;
     };
-  }, [me, person.id]);
+  }, [me, person.id, loadConn]);
 
   const handleFollowToggle = async () => {
     if (busy) return;
     setBusy(true);
-    const prevFollowing = isFollowing;
-    const prevCount = followerCount;
-
-    // Optimistic UI update
-    const nextFollowing = !prevFollowing;
-    const nextCount = Math.max(0, prevCount + (nextFollowing ? 1 : -1));
-    setIsFollowing(nextFollowing);
-    setFollowerCount(nextCount);
-
-    const res = await toggleFollowUser(me, person.id, prevFollowing, prevCount);
+    const res = await toggleFollowUser(me, person.id, isFollowing, followerCount);
     setIsFollowing(res.isFollowing);
     setFollowerCount(res.followerCount);
+    if ("error" in res && res.error) Alert.alert("Couldn't update follow", res.error);
     setBusy(false);
   };
 
-  const handleMessage = async () => {
-    // Check if an existing connection exists
-    const { data } = await supabase
+  const sendRequest = async (kind: "message" | "collab") => {
+    const { error } = await supabase
       .from("connections")
-      .select("id, status")
-      .or(`and(requester_id.eq.${me},addressee_id.eq.${person.id}),and(requester_id.eq.${person.id},addressee_id.eq.${me})`)
-      .maybeSingle();
-
-    if (data?.id) {
-      if (onMessage) onMessage(data.id);
+      .insert({ requester_id: me, addressee_id: person.id });
+    if (error) {
+      Alert.alert("Couldn't send request", error.message);
       return;
     }
-
-    // Auto-create connection so messaging works smoothly
-    const { data: newConn, error } = await supabase
-      .from("connections")
-      .insert({ requester_id: me, addressee_id: person.id, status: "accepted" })
-      .select("id")
-      .single();
-
-    if (!error && newConn?.id && onMessage) {
-      onMessage(newConn.id);
-    } else if (onMessage) {
-      onMessage(newConn?.id ?? person.id);
-    }
+    await loadConn();
+    Alert.alert(
+      kind === "collab" ? "Collab invite sent" : "Request sent",
+      `You can message ${person.username} once they accept.`
+    );
   };
 
-  const handleCollab = async () => {
-    if (collabSent) {
-      Alert.alert("Collab request already sent!", `You've invited ${person.username} to collaborate.`);
+  const acceptRequest = async () => {
+    if (!conn) return;
+    const { error } = await supabase.from("connections").update({ status: "accepted" }).eq("id", conn.id);
+    if (error) {
+      Alert.alert("Couldn't accept", error.message);
       return;
     }
-    setCollabSent(true);
-    await supabase.from("connections").upsert({
-      requester_id: me,
-      addressee_id: person.id,
-      status: "pending",
-    });
-    Alert.alert("Collab invite sent!", `We sent an invitation to ${person.username} to make something together.`);
+    await loadConn();
   };
 
-  const localMeta = getLocalProfileMeta(person.id);
+  const askToAccept = () =>
+    Alert.alert(`${person.username} wants to connect`, "Accept to start chatting.", [
+      { text: "Not now", style: "cancel" },
+      { text: "Accept", onPress: acceptRequest },
+    ]);
+
+  const handleMessage = () => {
+    if (!conn) {
+      Alert.alert(`Connect with ${person.username}?`, "Messages open once they accept your request.", [
+        { text: "Not now", style: "cancel" },
+        { text: "Send request", onPress: () => sendRequest("message") },
+      ]);
+      return;
+    }
+    if (conn.status === "accepted") {
+      onMessage?.(conn.id);
+      return;
+    }
+    if (conn.requester_id === me) {
+      Alert.alert("Request pending", `You can message ${person.username} once they accept.`);
+      return;
+    }
+    askToAccept();
+  };
+
+  const handleCollab = () => {
+    if (!conn) {
+      Alert.alert(
+        `Invite ${person.username} to collab?`,
+        "We'll send a connection request. You can plan your collab in chat once they accept.",
+        [
+          { text: "Not now", style: "cancel" },
+          { text: "Send invite", onPress: () => sendRequest("collab") },
+        ]
+      );
+      return;
+    }
+    if (conn.status === "accepted") {
+      Alert.alert("You're connected", `Open a chat with ${person.username} to plan your collab?`, [
+        { text: "Not now", style: "cancel" },
+        { text: "Open chat", onPress: () => onMessage?.(conn.id) },
+      ]);
+      return;
+    }
+    if (conn.requester_id === me) {
+      Alert.alert("Invite already sent", `You can plan your collab with ${person.username} once they accept.`);
+      return;
+    }
+    askToAccept();
+  };
+
+  const collabSent = !!conn && conn.status === "pending" && conn.requester_id === me;
+
   const subtitle = [person.roles.join(", "), person.city].filter(Boolean).join(" · ");
-  const customTagline = (person.tagline ?? localMeta.tagline)?.trim();
-  const quote = customTagline
-    ? `"${customTagline.replace(/["“”]/g, "")}"`
-    : person.bio
-    ? `"${person.bio.slice(0, 60).replace(/["“”]/g, "").trim()}"`
-    : '"soft voices. loud feelings."';
-
-  const userInfluences =
-    person.influences && person.influences.length > 0
-      ? person.influences
-      : localMeta.influences && localMeta.influences.length > 0
-      ? localMeta.influences
-      : DEFAULT_INFLUENCES;
+  const tagline = person.tagline?.trim();
+  const quote = tagline ? `"${tagline.replace(/["“”]/g, "")}"` : null;
+  const influences = person.influences ?? [];
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 50 }}>
-      {/* Top Banner with clean soft pastel color and large letter */}
       <View style={[styles.banner, { backgroundColor: color || "#E8D5E5" }]}>
         <Text style={styles.bannerLetter}>{person.username[0].toUpperCase()}</Text>
 
-        {/* Top left frosted back button */}
-        <Pressable style={({ pressed }) => [styles.frostedBtn, styles.backBtn, pressed && { opacity: 0.6 }]} onPress={onBack}>
+        <Pressable
+          style={({ pressed }) => [styles.frostedBtn, styles.backBtn, pressed && { opacity: 0.6 }]}
+          onPress={onBack}
+        >
           <Ionicons name="arrow-back" size={20} color="#FFFFFF" />
         </Pressable>
 
-        {/* Top right frosted 3-dots report/block menu */}
         <View style={[styles.frostedBtn, styles.menuBtn]}>
           <ReportBlockMenu
             me={me}
@@ -175,21 +202,13 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
         </View>
       </View>
 
-      {/* Main Sheet with rounded top corners */}
       <View style={styles.sheet}>
-        {/* Name and Online indicator */}
-        <View style={styles.nameRow}>
-          <Text style={styles.name}>{person.username}</Text>
-          <View style={styles.onlineDot} />
-        </View>
+        <Text style={styles.name}>{person.username}</Text>
 
-        {/* Subtitle */}
         {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
 
-        {/* Tagline / Quote (Describe yourself on top) */}
-        <Text style={styles.tagline}>{quote}</Text>
+        {!!quote && <Text style={styles.tagline}>{quote}</Text>}
 
-        {/* Sound / Genre Pills */}
         {person.genres.length > 0 && (
           <View style={styles.pillsRow}>
             {person.genres.map((g) => (
@@ -200,7 +219,6 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
           </View>
         )}
 
-        {/* Stats Row: Followers, Following, Demos */}
         <View style={styles.statsRow}>
           <View style={styles.statCol}>
             <Text style={styles.statNum}>{followerCount}</Text>
@@ -216,9 +234,7 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
           </View>
         </View>
 
-        {/* 3 Action Buttons: Message, Follow, Collab */}
         <View style={styles.actionsRow}>
-          {/* Message button (dark navy) */}
           <Pressable
             style={({ pressed }) => [styles.actionBtn, styles.btnMessage, pressed && { opacity: 0.8 }]}
             onPress={handleMessage}
@@ -227,20 +243,14 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
             <Text style={styles.btnMessageText}>Message</Text>
           </Pressable>
 
-          {/* Follow button (light lavender) */}
           <Pressable
             style={({ pressed }) => [styles.actionBtn, styles.btnFollow, pressed && { opacity: 0.8 }]}
             onPress={handleFollowToggle}
           >
-            <Ionicons
-              name={isFollowing ? "checkmark" : "person-add-outline"}
-              size={17}
-              color="#241838"
-            />
+            <Ionicons name={isFollowing ? "checkmark" : "person-add-outline"} size={17} color="#241838" />
             <Text style={styles.btnFollowText}>{isFollowing ? "Following" : "Follow"}</Text>
           </Pressable>
 
-          {/* Collab button (rose/magenta) */}
           <Pressable
             style={({ pressed }) => [
               styles.actionBtn,
@@ -255,41 +265,42 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
           </Pressable>
         </View>
 
-        {/* About Section (Full Bio) */}
-        <Text style={styles.sectionHeader}>About</Text>
-        <Text style={styles.bodyText}>
-          {person.bio ||
-            "singer + songwriter. into hazy guitars, late night demos, and honest lyrics. looking for a drummer to start something new. let's make beautiful things together."}
-        </Text>
+        {!!person.bio && (
+          <>
+            <Text style={styles.sectionHeader}>About</Text>
+            <Text style={styles.bodyText}>{person.bio}</Text>
+          </>
+        )}
 
-        {/* Influences Section (Artists, Musicians, Bands) */}
-        <Text style={styles.sectionHeader}>Influences</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.influencesScroll}
-        >
-          {userInfluences.map((inf, idx) => (
-            <View key={idx} style={styles.influenceCol}>
-              <View
-                style={[
-                  styles.influenceTile,
-                  { backgroundColor: INFLUENCE_PALETTES[idx % INFLUENCE_PALETTES.length] },
-                ]}
-              >
-                <Text style={styles.influenceInitial}>{inf[0]?.toUpperCase()}</Text>
-              </View>
-              <Text style={styles.influenceName} numberOfLines={2}>
-                {inf}
-              </Text>
-            </View>
-          ))}
-        </ScrollView>
+        {influences.length > 0 && (
+          <>
+            <Text style={styles.sectionHeader}>Influences</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.influencesScroll}
+            >
+              {influences.map((inf, idx) => (
+                <View key={`${inf}-${idx}`} style={styles.influenceCol}>
+                  <View
+                    style={[
+                      styles.influenceTile,
+                      { backgroundColor: INFLUENCE_PALETTES[idx % INFLUENCE_PALETTES.length] },
+                    ]}
+                  >
+                    <Text style={styles.influenceInitial}>{inf[0]?.toUpperCase()}</Text>
+                  </View>
+                  <Text style={styles.influenceName} numberOfLines={2}>
+                    {inf}
+                  </Text>
+                </View>
+              ))}
+            </ScrollView>
+          </>
+        )}
 
-        {/* Demos Section */}
         <DemoSection userId={person.id} />
 
-        {/* Looking for */}
         {person.looking_for.length > 0 && (
           <>
             <Text style={styles.sectionHeader}>Looking for</Text>
@@ -303,7 +314,6 @@ export default function PublicProfile({ person, me, color, onBack, onMessage }: 
           </>
         )}
 
-        {/* Availability */}
         {person.availability.length > 0 && (
           <>
             <Text style={styles.sectionHeader}>Availability</Text>
@@ -368,23 +378,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 24,
   },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
   name: {
     fontSize: 28,
     fontWeight: "700",
     color: "#241838",
     letterSpacing: -0.5,
-  },
-  onlineDot: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    backgroundColor: "#4CD964",
-    marginLeft: 8,
-    marginTop: 2,
   },
   subtitle: {
     fontSize: 14,

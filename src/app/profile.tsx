@@ -15,9 +15,9 @@ import {
 } from "react-native";
 import BlockedList from "../components/BlockedList";
 import DemoSection from "../components/DemoSection";
+import PrivacySettings from "../components/PrivacySettings";
 import ProfileForm, { ProfileData } from "../components/ProfileForm";
 import { getFollowState } from "../lib/follows";
-import { getLocalProfileMeta } from "../lib/profileMeta";
 import { supabase } from "../lib/supabase";
 import { colors } from "../theme";
 
@@ -43,12 +43,11 @@ export default function Profile() {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [showBlocked, setShowBlocked] = useState(false);
-  const [tick, setTick] = useState(0);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
-  const [followerCount, setFollowerCount] = useState(127);
-  const [followingCount, setFollowingCount] = useState(28);
-  const [demoCount, setDemoCount] = useState(6);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [demoCount, setDemoCount] = useState(0);
 
   const load = useCallback(async () => {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -57,17 +56,8 @@ export default function Profile() {
     setUserId(user.id);
 
     const { data } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
-    const meta = getLocalProfileMeta(user.id);
-    const merged: ProfileData | null = data
-      ? {
-          ...data,
-          tagline: (data as any).tagline ?? meta.tagline ?? null,
-          influences: (data as any).influences ?? meta.influences ?? [],
-        }
-      : null;
-    setProfile(merged);
+    setProfile((data as ProfileData | null) ?? null);
 
-    // Load stats
     getFollowState(user.id, user.id).then((st) => {
       setFollowerCount(st.followerCount);
       setFollowingCount(st.followingCount);
@@ -77,15 +67,13 @@ export default function Profile() {
       .from("demos")
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id)
-      .then(({ count }) => {
-        if (typeof count === "number") setDemoCount(count);
-      });
+      .is("parent_id", null)
+      .then(({ count }) => setDemoCount(count ?? 0));
   }, []);
 
   useFocusEffect(
     useCallback(() => {
       load();
-      setTick((t) => t + 1);
     }, [load])
   );
 
@@ -96,37 +84,41 @@ export default function Profile() {
           setEditing(false);
           return true;
         }
-        if (showBlocked) {
-          setShowBlocked(false);
+        if (showPrivacy) {
+          setShowPrivacy(false);
           return true;
         }
         return false;
       });
       return () => sub.remove();
-    }, [editing, showBlocked])
+    }, [editing, showPrivacy])
   );
 
   const openSettingsMenu = () => {
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
-          options: ["Cancel", "Edit profile", "Blocked accounts", "Log out"],
+          options: ["Cancel", "Edit profile", "Privacy and safety", "Log out"],
           destructiveButtonIndex: 3,
           cancelButtonIndex: 0,
         },
         (buttonIndex) => {
           if (buttonIndex === 1) setEditing(true);
-          else if (buttonIndex === 2) setShowBlocked(true);
+          else if (buttonIndex === 2) setShowPrivacy(true);
           else if (buttonIndex === 3) supabase.auth.signOut();
         }
       );
     } else {
-      Alert.alert("Account Settings", undefined, [
-        { text: "Edit profile", onPress: () => setEditing(true) },
-        { text: "Blocked accounts", onPress: () => setShowBlocked(true) },
-        { text: "Log out", style: "destructive", onPress: () => supabase.auth.signOut() },
-        { text: "Cancel", style: "cancel" },
-      ]);
+      Alert.alert(
+        "Settings",
+        undefined,
+        [
+          { text: "Edit profile", onPress: () => setEditing(true) },
+          { text: "Privacy and safety", onPress: () => setShowPrivacy(true) },
+          { text: "Log out", style: "destructive", onPress: () => supabase.auth.signOut() },
+        ],
+        { cancelable: true }
+      );
     }
   };
 
@@ -134,7 +126,7 @@ export default function Profile() {
     if (!profile) return;
     try {
       await Share.share({
-        message: `Check out ${profile.username}'s music profile on Gigly!`,
+        message: `Check out ${profile.username}'s music profile on gigly!`,
       });
     } catch {}
   };
@@ -154,19 +146,34 @@ export default function Profile() {
     );
   }
 
+  if (showPrivacy && userId) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.subHeader}>
+          <Pressable onPress={() => setShowPrivacy(false)} hitSlop={12}>
+            <Ionicons name="arrow-back" size={24} color={colors.text} />
+          </Pressable>
+          <Text style={styles.subHeaderTitle}>Privacy and safety</Text>
+        </View>
+        <ScrollView contentContainerStyle={{ padding: 20 }}>
+          <PrivacySettings userId={userId} />
+          <BlockedList userId={userId} />
+        </ScrollView>
+      </View>
+    );
+  }
+
   if (!profile) return <View style={styles.screen} />;
 
   const subtitle = [profile.roles.join(", "), profile.city].filter(Boolean).join(" · ");
   const tagline = profile.tagline?.trim();
-  const userInfluences = profile.influences && profile.influences.length > 0 ? profile.influences : [];
+  const userInfluences = profile.influences ?? [];
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ paddingBottom: 50 }}>
-      {/* Banner */}
       <View style={styles.banner}>
         <Text style={styles.bannerLetter}>{profile.username[0].toUpperCase()}</Text>
 
-        {/* Top-right frosted settings gear button */}
         <Pressable
           style={({ pressed }) => [styles.frostedBtn, styles.gearBtn, pressed && { opacity: 0.6 }]}
           onPress={openSettingsMenu}
@@ -175,18 +182,11 @@ export default function Profile() {
         </Pressable>
       </View>
 
-      {/* Sheet */}
       <View style={styles.sheet}>
-        {/* Name and Online indicator */}
-        <View style={styles.nameRow}>
-          <Text style={styles.name}>{profile.username}</Text>
-          <View style={styles.onlineDot} />
-        </View>
+        <Text style={styles.name}>{profile.username}</Text>
 
-        {/* Subtitle (Roles · City) */}
         {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
 
-        {/* Custom Tagline (Describe yourself on top, separate from bio) */}
         {!!tagline ? (
           <Text style={styles.tagline}>"{tagline.replace(/["“”]/g, "").trim()}"</Text>
         ) : (
@@ -195,7 +195,6 @@ export default function Profile() {
           </Pressable>
         )}
 
-        {/* Sound / Genre Pills */}
         {profile.genres.length > 0 && (
           <View style={styles.pillsRow}>
             {profile.genres.map((g) => (
@@ -206,7 +205,6 @@ export default function Profile() {
           </View>
         )}
 
-        {/* Stats Row */}
         <View style={styles.statsRow}>
           <View style={styles.statCol}>
             <Text style={styles.statNum}>{followerCount}</Text>
@@ -222,7 +220,6 @@ export default function Profile() {
           </View>
         </View>
 
-        {/* Action Buttons: Edit Profile and Share */}
         <View style={styles.actionsRow}>
           <Pressable
             style={({ pressed }) => [styles.actionBtn, styles.btnEdit, pressed && { opacity: 0.8 }]}
@@ -241,13 +238,11 @@ export default function Profile() {
           </Pressable>
         </View>
 
-        {/* About Section (Full Bio) */}
         <Text style={styles.sectionHeader}>About</Text>
-        <Text style={styles.bodyText}>
+        <Text style={profile.bio ? styles.bodyText : styles.emptyText}>
           {profile.bio || "Add a short bio so people know what you make."}
         </Text>
 
-        {/* Influences Section (User's custom artists, musicians, bands) */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionHeaderNoMargin}>Influences</Text>
           <Pressable onPress={() => setEditing(true)} hitSlop={8}>
@@ -262,7 +257,7 @@ export default function Profile() {
             contentContainerStyle={styles.influencesScroll}
           >
             {userInfluences.map((inf, idx) => (
-              <View key={idx} style={styles.influenceCol}>
+              <View key={`${inf}-${idx}`} style={styles.influenceCol}>
                 <View
                   style={[
                     styles.influenceTile,
@@ -285,10 +280,8 @@ export default function Profile() {
           </Pressable>
         )}
 
-        {/* Demos Section */}
         {userId && <DemoSection userId={userId} editable />}
 
-        {/* Looking for */}
         {profile.looking_for.length > 0 && (
           <>
             <Text style={styles.sectionHeader}>Looking for</Text>
@@ -302,7 +295,6 @@ export default function Profile() {
           </>
         )}
 
-        {/* Availability */}
         {profile.availability.length > 0 && (
           <>
             <Text style={styles.sectionHeader}>Availability</Text>
@@ -316,19 +308,6 @@ export default function Profile() {
             </View>
           </>
         )}
-
-        {/* Blocked accounts list */}
-        {showBlocked && userId && (
-          <View style={{ marginTop: 24 }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={styles.sectionHeader}>Blocked accounts</Text>
-              <Pressable onPress={() => setShowBlocked(false)}>
-                <Text style={{ color: colors.accent, fontWeight: "600" }}>Hide</Text>
-              </Pressable>
-            </View>
-            <BlockedList key={tick} userId={userId} />
-          </View>
-        )}
       </View>
     </ScrollView>
   );
@@ -338,6 +317,22 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: "#FAF7FB",
+  },
+  subHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    paddingTop: 56,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EAE0F2",
+    backgroundColor: "#FFFFFF",
+  },
+  subHeaderTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#241838",
   },
   banner: {
     height: 240,
@@ -371,23 +366,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 24,
   },
-  nameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
   name: {
     fontSize: 28,
     fontWeight: "700",
     color: "#241838",
     letterSpacing: -0.5,
-  },
-  onlineDot: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    backgroundColor: "#4CD964",
-    marginLeft: 8,
-    marginTop: 2,
   },
   subtitle: {
     fontSize: 14,
@@ -504,6 +487,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: "#463D5C",
+  },
+  emptyText: {
+    fontSize: 14,
+    color: "#7B7093",
   },
   influencesScroll: {
     flexDirection: "row",

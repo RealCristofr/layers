@@ -14,14 +14,13 @@ import {
 import ConnectButton from "../components/ConnectButton";
 import { ProfileData } from "../components/ProfileForm";
 import PublicProfile from "../components/PublicProfile";
-import { getLocalProfileMeta } from "../lib/profileMeta";
 import { supabase } from "../lib/supabase";
 import { colors } from "../theme";
 
 type Person = ProfileData & { id: string };
 
 const ROLE_FILTERS = ["All", "Vocals", "Guitar", "Producer", "Bass", "Drums", "Keys"];
-const GENRE_FILTERS = ["Indie", "Shoegaze", "Pop", "Dream Pop", "Lo-fi", "Nearby"];
+const GENRE_FILTERS = ["Indie", "Shoegaze", "Pop", "Dream Pop", "Lo-fi", "My city"];
 
 const AVATAR_PALETTES = [
   { bg: "#E8C2D8", fg: "#3F182F", border: "#F6D7EA" },
@@ -37,12 +36,8 @@ const paletteFor = (name: string) => {
   return AVATAR_PALETTES[hash];
 };
 
-const distanceFor = (name: string) => {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 17 + name.charCodeAt(i)) % 25;
-  const dist = 2 + (hash % 15);
-  return `${dist} mi`;
-};
+const cityKey = (city: string | null | undefined) =>
+  (city ?? "").split(",")[0].trim().toLowerCase();
 
 const openChat = (connectionId: string, name: string) => {
   router.navigate({
@@ -54,6 +49,7 @@ const openChat = (connectionId: string, name: string) => {
 export default function Discover() {
   const [people, setPeople] = useState<Person[]>([]);
   const [me, setMe] = useState<string | null>(null);
+  const [myCity, setMyCity] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [selectedRole, setSelectedRole] = useState("All");
@@ -65,24 +61,17 @@ export default function Discover() {
     const myId = sessionData.session?.user.id;
     if (!myId) return;
     setMe(myId);
+
+    const { data: mine } = await supabase.from("profiles").select("city").eq("id", myId).maybeSingle();
+    setMyCity(mine?.city ?? null);
+
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
       .neq("id", myId)
       .order("updated_at", { ascending: false });
 
-    if (!error && data) {
-      // Merge with any local metadata
-      const enriched = (data as Person[]).map((p) => {
-        const meta = getLocalProfileMeta(p.id);
-        return {
-          ...p,
-          tagline: p.tagline ?? meta.tagline ?? null,
-          influences: p.influences ?? meta.influences ?? [],
-        };
-      });
-      setPeople(enriched);
-    }
+    if (!error && data) setPeople(data as Person[]);
     setLoading(false);
   }, []);
 
@@ -112,27 +101,31 @@ export default function Discover() {
         person={selected}
         me={me}
         color={pal.bg}
-        onBack={() => setSelected(null)}
+        onBack={() => {
+  setSelected(null);
+  load();
+}}
         onMessage={(connectionId) => openChat(connectionId, selected.username)}
       />
     );
   }
+
+  const needsCity = selectedGenre === "My city" && !cityKey(myCity);
 
   const shown = people.filter((p) => {
     if (!p.username) return false;
     const text = `${p.username} ${p.roles.join(" ")} ${p.city ?? ""} ${p.genres.join(" ")} ${p.tagline ?? ""} ${p.bio ?? ""}`.toLowerCase();
     if (!text.includes(query.toLowerCase())) return false;
 
-    // Role filter
     if (selectedRole !== "All") {
       const hasRole = p.roles.some((r) => r.toLowerCase().includes(selectedRole.toLowerCase()));
       if (!hasRole) return false;
     }
 
-    // Secondary filter (genre or nearby)
     if (selectedGenre) {
-      if (selectedGenre === "Nearby") {
-        return Boolean(p.city);
+      if (selectedGenre === "My city") {
+        const mine = cityKey(myCity);
+        return !!mine && cityKey(p.city) === mine;
       }
       const hasGenre = p.genres.some((g) => g.toLowerCase().includes(selectedGenre.toLowerCase()));
       if (!hasGenre) return false;
@@ -143,24 +136,20 @@ export default function Discover() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={{ padding: 18, paddingTop: 52, paddingBottom: 50 }}>
-      {/* Header matching the dreamy mockup */}
       <View style={styles.header}>
         <View style={styles.brandingWrap}>
-          {/* Soft blush watercolor wash behind title */}
           <View style={styles.brushWash}>
             <Text style={styles.brandTitle}>gigly</Text>
           </View>
           <Text style={styles.brandSubtitle}>MUSIC SOUNDS BETTER TOGETHER</Text>
         </View>
 
-        {/* Handwritten aesthetic note */}
         <View style={styles.handwrittenWrap}>
           <Text style={styles.handwrittenText}>find your</Text>
           <Text style={styles.handwrittenText}>people ♡</Text>
         </View>
       </View>
 
-      {/* Pill Search Input */}
       <View style={styles.searchBar}>
         <Ionicons name="search-outline" size={18} color="#7E7295" />
         <TextInput
@@ -177,8 +166,6 @@ export default function Discover() {
         )}
       </View>
 
-      {/* Two Filter Rows matching mockup */}
-      {/* Row 1: Roles */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
         {ROLE_FILTERS.map((r) => {
           const active = selectedRole === r;
@@ -194,7 +181,6 @@ export default function Discover() {
         })}
       </ScrollView>
 
-      {/* Row 2: Genres & Nearby */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.filterRow, { marginBottom: 16 }]}>
         {GENRE_FILTERS.map((g) => {
           const active = selectedGenre === g;
@@ -204,7 +190,7 @@ export default function Discover() {
               onPress={() => setSelectedGenre(active ? null : g)}
               style={[styles.filterPill, active && styles.filterPillActive]}
             >
-              {g === "Nearby" && (
+              {g === "My city" && (
                 <Ionicons
                   name="location-outline"
                   size={14}
@@ -230,87 +216,84 @@ export default function Discover() {
         </View>
       )}
 
-      {!loading && people.length > 0 && shown.length === 0 && (
+      {!loading && needsCity && (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyTitle}>Add your city first</Text>
+          <Text style={styles.emptySub}>
+            Go to Profile, then Edit profile, and add your city to see musicians near you.
+          </Text>
+        </View>
+      )}
+
+      {!loading && !needsCity && people.length > 0 && shown.length === 0 && (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyTitle}>No musicians match this filter</Text>
           <Text style={styles.emptySub}>Try picking "All" or clearing your search term.</Text>
         </View>
       )}
 
-      {/* Discover Musician Cards matching mockup */}
-      {shown.map((p) => {
-        const pal = paletteFor(p.username);
-        const distance = distanceFor(p.username);
-        const tagline = p.tagline?.trim() || p.bio?.slice(0, 70).trim() || "looking for musicians to make something real ♡";
-        const primaryRole = p.roles[0] || "Musician";
+      {!needsCity &&
+        shown.map((p) => {
+          const pal = paletteFor(p.username);
+          const tagline = p.tagline?.trim() || p.bio?.slice(0, 70).trim() || "";
+          const rolesText = p.roles.join(", ");
 
-        return (
-          <Pressable
-            key={p.id}
-            onPress={() => setSelected(p)}
-            style={({ pressed }) => [styles.card, pressed && { opacity: 0.9 }]}
-          >
-            {/* Left: Avatar with green online dot */}
-            <View style={styles.avatarWrap}>
-              <View style={[styles.avatar, { backgroundColor: pal.bg, borderColor: pal.border }]}>
-                <Text style={[styles.avatarLetter, { color: pal.fg }]}>
-                  {p.username[0].toUpperCase()}
-                </Text>
+          return (
+            <Pressable
+              key={p.id}
+              onPress={() => setSelected(p)}
+              style={({ pressed }) => [styles.card, pressed && { opacity: 0.9 }]}
+            >
+              <View style={styles.avatarWrap}>
+                <View style={[styles.avatar, { backgroundColor: pal.bg, borderColor: pal.border }]}>
+                  <Text style={[styles.avatarLetter, { color: pal.fg }]}>
+                    {p.username[0].toUpperCase()}
+                  </Text>
+                </View>
               </View>
-              {/* Online indicator dot overlapping avatar border */}
-              <View style={styles.onlineBadge} />
-            </View>
 
-            {/* Right: Info + Bio + Compact Connect Button */}
-            <View style={styles.infoCol}>
-              {/* Top row: username + distance */}
-              <View style={styles.cardHeaderRow}>
+              <View style={styles.infoCol}>
                 <Text style={styles.cardUsername}>{p.username}</Text>
-                <Text style={styles.cardDistance}>{distance}</Text>
-              </View>
 
-              {/* Role */}
-              <Text style={styles.cardRole}>{primaryRole}</Text>
+                {!!rolesText && <Text style={styles.cardRole}>{rolesText}</Text>}
 
-              {/* Location with mini pin */}
-              {!!p.city && (
-                <View style={styles.locationRow}>
-                  <Ionicons name="location-sharp" size={12} color="#7E7295" />
-                  <Text style={styles.locationText}>{p.city}</Text>
-                </View>
-              )}
-
-              {/* Italic tagline/vibe */}
-              <Text style={styles.cardTagline} numberOfLines={2}>
-                {tagline}
-              </Text>
-
-              {/* Bottom row: Mini genre pills + Connect Button */}
-              <View style={styles.cardBottomRow}>
-                <View style={styles.genresRow}>
-                  {p.genres.slice(0, 3).map((g) => (
-                    <View key={g} style={styles.miniGenrePill}>
-                      <Text style={styles.miniGenreText}>{g}</Text>
-                    </View>
-                  ))}
-                </View>
-
-                {/* Compact connect button aligned to right */}
-                {!!me && (
-                  <View style={{ marginLeft: "auto" }}>
-                    <ConnectButton
-                      me={me}
-                      otherId={p.id}
-                      compact
-                      onMessage={(connectionId) => openChat(connectionId, p.username)}
-                    />
+                {!!p.city && (
+                  <View style={styles.locationRow}>
+                    <Ionicons name="location-sharp" size={12} color="#7E7295" />
+                    <Text style={styles.locationText}>{p.city}</Text>
                   </View>
                 )}
+
+                {!!tagline && (
+                  <Text style={styles.cardTagline} numberOfLines={2}>
+                    {tagline}
+                  </Text>
+                )}
+
+                <View style={styles.cardBottomRow}>
+                  <View style={styles.genresRow}>
+                    {p.genres.slice(0, 3).map((g) => (
+                      <View key={g} style={styles.miniGenrePill}>
+                        <Text style={styles.miniGenreText}>{g}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {!!me && (
+                    <View style={{ marginLeft: "auto" }}>
+                      <ConnectButton
+                        me={me}
+                        otherId={p.id}
+                        compact
+                        onMessage={(connectionId) => openChat(connectionId, p.username)}
+                      />
+                    </View>
+                  )}
+                </View>
               </View>
-            </View>
-          </Pressable>
-        );
-      })}
+            </Pressable>
+          );
+        })}
     </ScrollView>
   );
 }
@@ -442,7 +425,6 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   avatarWrap: {
-    position: "relative",
     marginRight: 12,
   },
   avatar: {
@@ -457,35 +439,14 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "700",
   },
-  onlineBadge: {
-    position: "absolute",
-    bottom: 2,
-    right: 2,
-    width: 13,
-    height: 13,
-    borderRadius: 7,
-    backgroundColor: "#4CD964",
-    borderWidth: 2,
-    borderColor: "#FFFFFF",
-  },
   infoCol: {
     flex: 1,
-  },
-  cardHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
   },
   cardUsername: {
     fontSize: 17,
     fontWeight: "700",
     color: "#241838",
     letterSpacing: -0.3,
-  },
-  cardDistance: {
-    fontSize: 12,
-    color: "#7E7295",
-    fontWeight: "500",
   },
   cardRole: {
     fontSize: 13,
